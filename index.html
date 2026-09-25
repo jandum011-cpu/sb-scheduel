@@ -43,7 +43,8 @@ input,select,textarea{font-family:inherit;}
 .header-actions .icon-btn{padding:8px;}
 .add-task-row{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:11px 14px;margin-bottom:16px;}
 .add-task-row input{border:none;outline:none;background:transparent;flex:1;font-size:14px;color:var(--text);}
-.add-task-row .plus{color:var(--accent);font-size:18px;font-weight:600;}
+.add-task-row .plus{all:unset;color:var(--accent);font-size:18px;font-weight:600;cursor:pointer;padding:2px 4px;border-radius:6px;}
+.add-task-row .plus:hover{background:var(--accent-soft);}
 .toolbar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
 .chip{border:1px solid var(--border);background:var(--panel);border-radius:20px;padding:5px 12px;font-size:12.5px;color:var(--muted);}
 .chip.active{background:var(--accent);border-color:var(--accent);color:#fff;}
@@ -128,7 +129,7 @@ input,select,textarea{font-family:inherit;}
       </div>
     </div>
     <div class="add-task-row">
-      <span class="plus">+</span>
+      <button class="plus" id="addBtn" title="Add task">+</button>
       <input id="addInput" type="text" placeholder="Add a task">
     </div>
     <div class="toolbar" id="filterBar"></div>
@@ -321,15 +322,18 @@ function toggleDone(t){
   showToast(t.done?'Task completed':'Task marked incomplete', ()=>{t.done=!t.done; saveState(); renderAll();});
 }
 
+function addTask(){
+  const input=$('#addInput');
+  const val=input.value.trim();
+  if(!val || !ui.activeList)return;
+  state.tasks.push({id:uid(),listId:ui.activeList,title:val,done:false,desc:'',dueDate:'',dueTime:'',repeat:'none',notes:'',subtasks:[],assigneeId:'',order:Date.now()});
+  input.value='';
+  saveState(); renderAll();
+}
 $('#addInput').addEventListener('keydown',(e)=>{
-  if(e.key==='Enter'){
-    const val=e.target.value.trim();
-    if(!val)return;
-    state.tasks.push({id:uid(),listId:ui.activeList,title:val,done:false,desc:'',dueDate:'',dueTime:'',repeat:'none',notes:'',subtasks:[],assigneeId:'',order:Date.now()});
-    e.target.value='';
-    saveState(); renderAll();
-  }
+  if(e.key==='Enter'){ addTask(); }
 });
+$('#addBtn').addEventListener('click', addTask);
 
 function renderDetails(){
   const t=state.tasks.find(x=>x.id===ui.selectedTask);
