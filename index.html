@@ -8,18 +8,12 @@
 :root{
   --bg:#fafbfc; --panel:#fff; --border:#e5e8ec; --text:#1c2128; --muted:#6b7280;
   --accent:#2563eb; --accent-soft:#eaf1ff; --danger:#dc2626; --radius:10px;
-  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
 }
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){--bg:#14161a;--panel:#1b1e24;--border:#2a2e35;--text:#e8eaed;--muted:#8b909a;--accent:#5b8def;--accent-soft:#1e2a44;}
-}
-:root[data-theme="dark"]{--bg:#14161a;--panel:#1b1e24;--border:#2a2e35;--text:#e8eaed;--muted:#8b909a;--accent:#5b8def;--accent-soft:#1e2a44;}
 *{box-sizing:border-box;}
-body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;height:100%;overflow:hidden;}
-html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px);}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;height:100vh;overflow:hidden;}
 button{font-family:inherit;cursor:pointer;}
 input,select,textarea{font-family:inherit;}
-.app{display:grid;grid-template-columns:240px 1fr 320px;height:100vh;height:100%;}
+.app{display:grid;grid-template-columns:240px 1fr 320px;height:100vh;}
 .sidebar{background:var(--panel);border-right:1px solid var(--border);padding:16px 12px;display:flex;flex-direction:column;overflow-y:auto;}
 .logo{font-weight:700;font-size:18px;padding:8px 10px 18px;display:flex;align-items:center;gap:8px;}
 .logo .dot{width:10px;height:10px;border-radius:3px;background:var(--accent);}
@@ -56,7 +50,7 @@ input,select,textarea{font-family:inherit;}
 .task-body{flex:1;min-width:0;}
 .task-title{font-size:14px;line-height:1.35;word-break:break-word;}
 .task-row.done .task-title{color:var(--muted);text-decoration:line-through;}
-.task-meta{display:flex;gap:10px;margin-top:3px;font-size:12px;color:var(--muted);flex-wrap:wrap;}
+.task-meta{display:flex;gap:10px;margin-top:3px;font-size:12px;color:var(--muted);flex-wrap:wrap;align-items:center;}
 .task-meta .overdue{color:var(--danger);}
 .grip{color:var(--border);cursor:grab;padding-top:2px;user-select:none;}
 .section-label{font-size:12.5px;color:var(--muted);font-weight:600;margin:18px 0 8px;cursor:pointer;display:flex;align-items:center;gap:6px;}
@@ -96,6 +90,7 @@ input,select,textarea{font-family:inherit;}
 .people-row:last-child{border-bottom:none;}
 .people-add{display:flex;gap:8px;margin-top:10px;}
 .people-add input{flex:1;border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13.5px;background:var(--bg);color:var(--text);outline:none;}
+.status-bar{position:fixed;top:0;left:0;right:0;background:var(--danger);color:#fff;font-size:12.5px;text-align:center;padding:6px;z-index:60;display:none;}
 @media(max-width:900px){
   .app{grid-template-columns:1fr;}
   .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:30;width:230px;transform:translateX(-100%);transition:transform .2s;}
@@ -109,6 +104,7 @@ input,select,textarea{font-family:inherit;}
 </style>
 </head>
 <body>
+<div class="status-bar" id="statusBar">Can't reach the server. Changes may not be saved.</div>
 <div class="app">
   <div class="sidebar-scrim" id="scrim"></div>
   <div class="sidebar" id="sidebar">
@@ -139,7 +135,27 @@ input,select,textarea{font-family:inherit;}
 <div id="toastHost"></div>
 
 <script>
-const LS_KEY='mytasks_v1';
+// Point this at your API if it's not served from the same folder as this file.
+const API_BASE = 'api/';
+
+async function api(path, opts) {
+  opts = opts || {};
+  try {
+    const res = await fetch(API_BASE + path, {
+      method: opts.method || 'GET',
+      headers: opts.body ? {'Content-Type':'application/json'} : undefined,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    setOnline(true);
+    if (!res.ok) throw new Error('HTTP '+res.status);
+    return await res.json();
+  } catch (e) {
+    setOnline(false);
+    throw e;
+  }
+}
+function setOnline(ok){ $('#statusBar').style.display = ok ? 'none' : 'block'; }
+
 const uid=()=>Math.random().toString(36).slice(2,10);
 const today=()=>{let d=new Date();d.setHours(0,0,0,0);return d;};
 const fmtDate=(iso)=>{
@@ -153,73 +169,76 @@ const fmtDate=(iso)=>{
 };
 const isOverdue=(iso,done)=> iso && !done && new Date(iso+'T00:00:00')<today();
 
-function seed(){
-  const lists=[
-    {id:'l-mytasks',name:'My Tasks',fixed:true},
-    {id:'l-personal',name:'Personal'},
-    {id:'l-work',name:'Work'},
-    {id:'l-projects',name:'Projects'},
-  ];
-  const mk=(listId,title,extra={})=>({id:uid(),listId,title,done:false,desc:'',dueDate:'',dueTime:'',repeat:'none',notes:'',subtasks:[],assigneeId:'',order:Date.now()+Math.random(),...extra});
-  const t=[
-    mk('l-mytasks','Prepare meeting documents',{dueDate:new Date().toISOString().slice(0,10)}),
-    mk('l-mytasks','Check email'),
-    mk('l-mytasks',"Review today's agenda"),
-    mk('l-mytasks','Upload website files',{dueDate:new Date(Date.now()+3*86400000).toISOString().slice(0,10)}),
-    mk('l-personal','Pay electricity bill'),
-    mk('l-personal','Buy groceries'),
-    mk('l-personal','Clean motorcycle'),
-    mk('l-work','Prepare presentation',{subtasks:[{id:uid(),title:'Prepare agenda',done:true},{id:uid(),title:'Prepare prayer',done:true},{id:uid(),title:'Prepare presentation',done:false},{id:uid(),title:'Test livestream',done:false}]}),
-    mk('l-work','Test livestream'),
-    mk('l-work','Update website'),
-    mk('l-work','Organize documents'),
-    mk('l-projects','Build task manager'),
-    mk('l-projects','Design dashboard'),
-    mk('l-projects','Test mobile layout'),
-  ];
-  return {lists,tasks:t,people:[]};
-}
-
-let state=loadState();
-function loadState(){
-  try{const raw=localStorage.getItem(LS_KEY); if(raw){const s=JSON.parse(raw); if(!s.people)s.people=[]; s.tasks.forEach(t=>{if(t.assigneeId===undefined)t.assigneeId='';}); return s;}}catch(e){}
-  const s=seed(); saveState(s); return s;
-}
-function saveState(s=state){ try{localStorage.setItem(LS_KEY, JSON.stringify(s));}catch(e){} }
-
-let ui={ activeList:'l-mytasks', filter:'all', sort:'myorder', selectedTask:null, search:'', dragId:null };
+let state = { lists: [], people: [], tasks: [] };
+let ui = { activeList: null, filter: 'all', sort: 'myorder', selectedTask: null, dragId: null };
 
 const $=(s)=>document.querySelector(s);
 const listNav=$('#listNav'), taskWrap=$('#taskListWrap'), filterBar=$('#filterBar'), details=$('#details'), detailsInner=$('#detailsInner'), mainTitle=$('#mainTitle');
+
+async function init(){
+  try{
+    const [lists, people] = await Promise.all([api('lists.php'), api('people.php')]);
+    state.lists = lists; state.people = people;
+    ui.activeList = (lists.find(l=>l.id==='l-mytasks') || lists[0] || {}).id || null;
+    if(ui.activeList) state.tasks = await api('tasks.php?list_id='+encodeURIComponent(ui.activeList));
+  }catch(e){ /* offline banner already shown */ }
+  renderAll();
+}
+
+async function loadTasksForActiveList(){
+  if(!ui.activeList){ state.tasks=[]; return; }
+  try{ state.tasks = await api('tasks.php?list_id='+encodeURIComponent(ui.activeList)); }catch(e){}
+}
+async function refreshLists(){
+  try{ state.lists = await api('lists.php'); }catch(e){}
+}
 
 function renderAll(){ renderSidebar(); renderFilterBar(); renderTasks(); renderDetails(); }
 
 function renderSidebar(){
   listNav.innerHTML='';
   state.lists.forEach(l=>{
-    const count=state.tasks.filter(t=>t.listId===l.id && !t.done).length;
     const row=document.createElement('div');
     row.className='list-item'+(ui.activeList===l.id?' active':'');
-    row.innerHTML=`<button class="select"><span class="name"></span></button><span class="count">${count||''}</span><div class="list-actions">${l.fixed?'':'<button class="icon-btn rn" title="Rename">✎</button><button class="icon-btn del" title="Delete">🗑</button>'}</div>`;
+    row.innerHTML=`<button class="select"><span class="name"></span></button><span class="count">${l.count||''}</span><div class="list-actions">${l.fixed?'':'<button class="icon-btn rn" title="Rename">✎</button><button class="icon-btn del" title="Delete">🗑</button>'}</div>`;
     row.querySelector('.name').textContent=l.name;
-    row.querySelector('.select').onclick=()=>{ui.activeList=l.id; ui.selectedTask=null; closeSidebarMobile(); renderAll();};
+    row.querySelector('.select').onclick=async ()=>{
+      ui.activeList=l.id; ui.selectedTask=null; closeSidebarMobile();
+      renderSidebar();
+      await loadTasksForActiveList();
+      renderTasks(); renderDetails();
+    };
     if(!l.fixed){
-      row.querySelector('.rn').onclick=(e)=>{e.stopPropagation(); const nn=prompt('Rename list',l.name); if(nn&&nn.trim()){l.name=nn.trim(); saveState(); renderSidebar(); renderTasks();}};
-      row.querySelector('.del').onclick=(e)=>{e.stopPropagation(); confirmDialog(`Delete list "${l.name}" and its tasks?`,()=>{
-        state.tasks=state.tasks.filter(t=>t.listId!==l.id);
-        state.lists=state.lists.filter(x=>x.id!==l.id);
-        if(ui.activeList===l.id) ui.activeList='l-mytasks';
-        saveState(); renderAll();
-      });};
+      row.querySelector('.rn').onclick=async (e)=>{
+        e.stopPropagation();
+        const nn=prompt('Rename list',l.name);
+        if(nn&&nn.trim()){
+          await api('lists.php',{method:'PUT',body:{id:l.id,name:nn.trim()}});
+          await refreshLists(); renderSidebar(); renderTasks();
+        }
+      };
+      row.querySelector('.del').onclick=(e)=>{
+        e.stopPropagation();
+        confirmDialog(`Delete list "${l.name}" and its tasks?`,async ()=>{
+          await api('lists.php?id='+encodeURIComponent(l.id),{method:'DELETE'});
+          if(ui.activeList===l.id) ui.activeList = (state.lists.find(x=>x.id==='l-mytasks')||{}).id;
+          await refreshLists();
+          await loadTasksForActiveList();
+          renderAll();
+        });
+      };
     }
     listNav.appendChild(row);
   });
 }
-$('#newListBtn').onclick=()=>{
+$('#newListBtn').onclick=async ()=>{
   const name=prompt('New list name');
   if(name&&name.trim()){
-    const l={id:'l-'+uid(),name:name.trim()};
-    state.lists.push(l); ui.activeList=l.id; saveState(); renderAll();
+    const l=await api('lists.php',{method:'POST',body:{name:name.trim()}});
+    ui.activeList=l.id;
+    await refreshLists();
+    await loadTasksForActiveList();
+    renderAll();
   }
 };
 
@@ -239,7 +258,7 @@ function renderFilterBar(){
 }
 
 function visibleTasks(){
-  let list=state.tasks.filter(t=>t.listId===ui.activeList);
+  let list=state.tasks;
   const t0=today();
   if(ui.filter==='today') list=list.filter(t=>!t.done && t.dueDate===t0.toISOString().slice(0,10));
   else if(ui.filter==='upcoming') list=list.filter(t=>!t.done && t.dueDate && new Date(t.dueDate+'T00:00:00')>t0);
@@ -287,13 +306,14 @@ function taskRow(t){
   row.ondragstart=()=>{ui.dragId=t.id;};
   row.ondragover=(e)=>{e.preventDefault(); row.classList.add('dragover');};
   row.ondragleave=()=>row.classList.remove('dragover');
-  row.ondrop=(e)=>{
+  row.ondrop=async (e)=>{
     e.preventDefault(); row.classList.remove('dragover');
     if(!ui.dragId||ui.dragId===t.id)return;
     const dragT=state.tasks.find(x=>x.id===ui.dragId);
-    if(!dragT||dragT.listId!==t.listId)return;
+    if(!dragT)return;
     dragT.order=t.order-0.5;
-    saveState(); renderTasks();
+    renderTasks();
+    await api('tasks.php',{method:'PUT',body:{id:dragT.id,order:dragT.order}});
   };
   const subCount = t.subtasks.length ? `${t.subtasks.filter(s=>s.done).length} of ${t.subtasks.length} completed` : '';
   row.innerHTML=`
@@ -315,19 +335,27 @@ function taskRow(t){
   return row;
 }
 
-function toggleDone(t){
+async function toggleDone(t){
   t.done=!t.done;
-  saveState(); renderAll();
-  showToast(t.done?'Task completed':'Task marked incomplete', ()=>{t.done=!t.done; saveState(); renderAll();});
+  renderAll();
+  await api('tasks.php',{method:'PUT',body:{id:t.id,done:t.done}});
+  await refreshLists(); renderSidebar();
+  showToast(t.done?'Task completed':'Task marked incomplete', async ()=>{
+    t.done=!t.done; renderAll();
+    await api('tasks.php',{method:'PUT',body:{id:t.id,done:t.done}});
+    await refreshLists(); renderSidebar();
+  });
 }
 
-$('#addInput').addEventListener('keydown',(e)=>{
+$('#addInput').addEventListener('keydown', async (e)=>{
   if(e.key==='Enter'){
     const val=e.target.value.trim();
-    if(!val)return;
-    state.tasks.push({id:uid(),listId:ui.activeList,title:val,done:false,desc:'',dueDate:'',dueTime:'',repeat:'none',notes:'',subtasks:[],assigneeId:'',order:Date.now()});
+    if(!val || !ui.activeList)return;
     e.target.value='';
-    saveState(); renderAll();
+    const t=await api('tasks.php',{method:'POST',body:{listId:ui.activeList,title:val}});
+    state.tasks.push(t);
+    renderTasks();
+    await refreshLists(); renderSidebar();
   }
 });
 
@@ -376,44 +404,62 @@ function renderDetails(){
     <select id="f-move">${state.lists.map(l=>`<option value="${l.id}" ${l.id===t.listId?'selected':''}>${escapeAttr(l.name)}</option>`).join('')}</select>
   `;
   $('#closeDetails').onclick=()=>{ui.selectedTask=null; renderTasks(); renderDetails(); details.classList.remove('open');};
-  $('#f-title').onblur=(e)=>{t.title=e.target.value.trim()||t.title; saveState(); renderTasks();};
-  $('#f-desc').onblur=(e)=>{t.desc=e.target.value; saveState(); renderTasks();};
-  $('#f-date').onchange=(e)=>{t.dueDate=e.target.value; saveState(); renderTasks(); renderDetails();};
-  $('#f-time').onchange=(e)=>{t.dueTime=e.target.value; saveState(); renderTasks();};
-  $('#f-repeat').onchange=(e)=>{t.repeat=e.target.value; saveState();};
-  $('#f-assignee').onchange=(e)=>{
+  $('#f-title').onblur=async (e)=>{t.title=e.target.value.trim()||t.title; renderTasks(); await api('tasks.php',{method:'PUT',body:{id:t.id,title:t.title}});};
+  $('#f-desc').onblur=async (e)=>{t.desc=e.target.value; renderTasks(); await api('tasks.php',{method:'PUT',body:{id:t.id,desc:t.desc}});};
+  $('#f-date').onchange=async (e)=>{t.dueDate=e.target.value; renderTasks(); renderDetails(); await api('tasks.php',{method:'PUT',body:{id:t.id,dueDate:t.dueDate}});};
+  $('#f-time').onchange=async (e)=>{t.dueTime=e.target.value; renderTasks(); await api('tasks.php',{method:'PUT',body:{id:t.id,dueTime:t.dueTime}});};
+  $('#f-repeat').onchange=async (e)=>{t.repeat=e.target.value; await api('tasks.php',{method:'PUT',body:{id:t.id,repeat:t.repeat}});};
+  $('#f-assignee').onchange=async (e)=>{
     if(e.target.value==='__add__'){
       const name=prompt('Person name');
       if(name&&name.trim()){
-        const p={id:uid(),name:name.trim()};
+        const p=await api('people.php',{method:'POST',body:{name:name.trim()}});
         state.people.push(p); t.assigneeId=p.id;
+        await api('tasks.php',{method:'PUT',body:{id:t.id,assigneeId:t.assigneeId}});
       }
-      saveState(); renderDetails(); renderTasks();
+      renderDetails(); renderTasks();
       return;
     }
-    t.assigneeId=e.target.value; saveState(); renderTasks();
+    t.assigneeId=e.target.value; renderTasks();
+    await api('tasks.php',{method:'PUT',body:{id:t.id,assigneeId:t.assigneeId}});
   };
-  $('#f-notes').onblur=(e)=>{t.notes=e.target.value; saveState();};
-  $('#f-move').onchange=(e)=>{t.listId=e.target.value; saveState(); renderAll();};
+  $('#f-notes').onblur=async (e)=>{t.notes=e.target.value; await api('tasks.php',{method:'PUT',body:{id:t.id,notes:t.notes}});};
+  $('#f-move').onchange=async (e)=>{
+    t.listId=e.target.value;
+    await api('tasks.php',{method:'PUT',body:{id:t.id,listId:t.listId}});
+    ui.selectedTask=null;
+    await refreshLists();
+    await loadTasksForActiveList();
+    renderAll();
+  };
   $('#f-complete').onclick=()=>{toggleDone(t); renderDetails();};
   $('#f-delete').onclick=()=>{
-    confirmDialog('Delete this task?',()=>{
+    confirmDialog('Delete this task?',async ()=>{
       const idx=state.tasks.findIndex(x=>x.id===t.id);
       const removed=state.tasks.splice(idx,1)[0];
-      ui.selectedTask=null; saveState(); renderAll();
-      showToast('Task deleted', ()=>{state.tasks.splice(idx,0,removed); saveState(); renderAll();});
+      ui.selectedTask=null; renderAll(); details.classList.remove('open');
+      await api('tasks.php?id='+encodeURIComponent(t.id),{method:'DELETE'});
+      await refreshLists(); renderSidebar();
+      showToast('Task deleted', async ()=>{
+        const nt=await api('tasks.php',{method:'POST',body:{listId:removed.listId,title:removed.title}});
+        Object.assign(nt, removed, {id:nt.id});
+        state.tasks.splice(idx,0,nt);
+        await api('tasks.php',{method:'PUT',body:{id:nt.id,desc:nt.desc,dueDate:nt.dueDate,dueTime:nt.dueTime,repeat:nt.repeat,notes:nt.notes,assigneeId:nt.assigneeId,done:nt.done}});
+        renderAll(); await refreshLists(); renderSidebar();
+      });
     });
   };
-  $('#addSub').onclick=()=>{
-    t.subtasks.push({id:uid(),title:'New subtask',done:false});
-    saveState(); renderDetails(); renderTasks();
+  $('#addSub').onclick=async ()=>{
+    const s=await api('subtasks.php',{method:'POST',body:{taskId:t.id,title:'New subtask'}});
+    t.subtasks.push(s);
+    renderDetails(); renderTasks();
   };
   detailsInner.querySelectorAll('.subtask-row').forEach(row=>{
     const sid=row.getAttribute('data-id');
     const s=t.subtasks.find(x=>x.id===sid);
-    row.querySelector('.checkbox').onclick=()=>{s.done=!s.done; saveState(); renderDetails(); renderTasks();};
-    row.querySelector('input[type=text]').onblur=(e)=>{s.title=e.target.value.trim()||s.title; saveState(); renderTasks();};
-    row.querySelector('.subdel').onclick=()=>{t.subtasks=t.subtasks.filter(x=>x.id!==sid); saveState(); renderDetails(); renderTasks();};
+    row.querySelector('.checkbox').onclick=async ()=>{s.done=!s.done; renderDetails(); renderTasks(); await api('subtasks.php',{method:'PUT',body:{id:sid,done:s.done}});};
+    row.querySelector('input[type=text]').onblur=async (e)=>{s.title=e.target.value.trim()||s.title; renderTasks(); await api('subtasks.php',{method:'PUT',body:{id:sid,title:s.title}});};
+    row.querySelector('.subdel').onclick=async ()=>{t.subtasks=t.subtasks.filter(x=>x.id!==sid); renderDetails(); renderTasks(); await api('subtasks.php?id='+encodeURIComponent(sid),{method:'DELETE'});};
   });
 }
 function escapeAttr(s){return (s||'').replace(/"/g,'&quot;');}
@@ -449,23 +495,25 @@ $('#peopleBtn').onclick=()=>{
       row.innerHTML=`<span></span><button class="icon-btn">🗑</button>`;
       row.querySelector('span').textContent=p.name;
       row.querySelector('button').onclick=()=>{
-        confirmDialog(`Remove "${p.name}" and unassign their tasks?`,()=>{
+        confirmDialog(`Remove "${p.name}" and unassign their tasks?`,async ()=>{
+          await api('people.php?id='+encodeURIComponent(p.id),{method:'DELETE'});
           state.tasks.forEach(t=>{if(t.assigneeId===p.id)t.assigneeId='';});
           state.people=state.people.filter(x=>x.id!==p.id);
-          saveState(); renderPeople(); renderTasks(); renderDetails();
+          renderPeople(); renderTasks(); renderDetails();
         });
       };
       list.appendChild(row);
     });
   }
   renderPeople();
-  ov.querySelector('#pAddBtn').onclick=()=>{
+  ov.querySelector('#pAddBtn').onclick=async ()=>{
     const input=ov.querySelector('#pNameInput');
     const name=input.value.trim();
     if(!name)return;
-    state.people.push({id:uid(),name});
+    const p=await api('people.php',{method:'POST',body:{name}});
+    state.people.push(p);
     input.value='';
-    saveState(); renderPeople();
+    renderPeople();
   };
 };
 
@@ -477,19 +525,27 @@ $('#searchBtn').onclick=()=>{
   ov.onclick=(e)=>{if(e.target===ov) ov.remove();};
   const input=ov.querySelector('#sInput'); input.focus();
   const results=ov.querySelector('#sResults');
+  let debounce;
   input.oninput=()=>{
-    const q=input.value.trim().toLowerCase();
-    results.innerHTML='';
-    if(!q)return;
-    const matches=state.tasks.filter(t=> t.title.toLowerCase().includes(q) || (t.desc||'').toLowerCase().includes(q) || (t.notes||'').toLowerCase().includes(q) || t.subtasks.some(s=>s.title.toLowerCase().includes(q)) );
-    if(!matches.length){ results.innerHTML=`<div style="padding:10px;color:var(--muted);font-size:13px;">No results</div>`; return; }
-    matches.slice(0,30).forEach(t=>{
-      const l=state.lists.find(x=>x.id===t.listId);
-      const r=document.createElement('div'); r.className='search-result';
-      r.innerHTML=`<div>${t.title}</div><div class="ctx">${l?l.name:''}</div>`;
-      r.onclick=()=>{ui.activeList=t.listId; ui.selectedTask=t.id; ov.remove(); renderAll(); openDetailsMobile();};
-      results.appendChild(r);
-    });
+    clearTimeout(debounce);
+    const q=input.value.trim();
+    if(!q){ results.innerHTML=''; return; }
+    debounce=setTimeout(async ()=>{
+      const matches=await api('search.php?q='+encodeURIComponent(q));
+      results.innerHTML='';
+      if(!matches.length){ results.innerHTML=`<div style="padding:10px;color:var(--muted);font-size:13px;">No results</div>`; return; }
+      matches.forEach(m=>{
+        const r=document.createElement('div'); r.className='search-result';
+        r.innerHTML=`<div>${m.title}</div><div class="ctx">${m.listName}</div>`;
+        r.onclick=async ()=>{
+          ui.activeList=m.listId; ov.remove();
+          await loadTasksForActiveList();
+          ui.selectedTask=m.id;
+          renderAll(); openDetailsMobile();
+        };
+        results.appendChild(r);
+      });
+    },250);
   };
 };
 
@@ -509,7 +565,7 @@ function setupMobile(){
 window.addEventListener('resize',setupMobile);
 setupMobile();
 
-renderAll();
+init();
 </script>
 </body>
 </html>
